@@ -15,7 +15,7 @@ namespace UnityTutorial.PlayerControl
         [SerializeField] private float BottomLimit = 70f;
         [SerializeField] private float MouseSensitivity = 21.9f;
         [SerializeField, Range(10, 500)] private float JumpFactor = 260f;
-        [SerializeField] private float Dis2Ground = 0.8f;
+        [SerializeField] private float Dis2Ground = 1.1f;
         [SerializeField] private LayerMask GroundCheck;
         [SerializeField] private float AirResistance = 0.8f;
         private Rigidbody _playerRigidbody;
@@ -32,6 +32,8 @@ namespace UnityTutorial.PlayerControl
         private int _crouchHash;
         private float _xRotation;
 
+        private Collider _playerCollider;
+
         private const float _walkSpeed = 2f;
         private const float _runSpeed = 6f;
         private Vector2 _currentVelocity;
@@ -42,7 +44,7 @@ namespace UnityTutorial.PlayerControl
             _hasAnimator = TryGetComponent<Animator>(out _animator);
             _playerRigidbody = GetComponent<Rigidbody>();
             _inputManager = GetComponent<InputManager>();
-
+            _playerCollider = GetComponent<Collider>();  // <--- CACHE THE PLAYER COLLIDER
 
             _xVelHash = Animator.StringToHash("X_Velocity");
             _yVelHash = Animator.StringToHash("Y_Velocity");
@@ -54,6 +56,7 @@ namespace UnityTutorial.PlayerControl
         }
 
         private void FixedUpdate() {
+            Debug.Log($"Jump: {_inputManager.Jump}, Crouch: {_inputManager.Crouch}, Grounded: {_grounded}");
             SampleGround();
             Move();
             HandleJump();
@@ -118,37 +121,45 @@ namespace UnityTutorial.PlayerControl
             if(!_grounded) return;
             _animator.SetTrigger(_jumpHash);
 
-            //Enable this if you want B-Hop
-            //_playerRigidbody.AddForce(-_playerRigidbody.velocity.y * Vector3.up, ForceMode.VelocityChange);
-            //_playerRigidbody.AddForce(Vector3.up * JumpFactor, ForceMode.Impulse);
-            //_animator.ResetTrigger(_jumpHash);
-        }
-
-        public void JumpAddForce()
-        {
-            //Comment this out if you want B-Hop, otherwise the player will jump twice in the air
             _playerRigidbody.AddForce(-_playerRigidbody.linearVelocity.y * Vector3.up, ForceMode.VelocityChange);
             _playerRigidbody.AddForce(Vector3.up * JumpFactor, ForceMode.Impulse);
             _animator.ResetTrigger(_jumpHash);
         }
 
+        public void JumpAddForce()
+        {
+            _playerRigidbody.AddForce (Vector3.up* JumpFactor, ForceMode.Impulse);
+        }
+
+
+
         private void SampleGround()
         {
-            if(!_hasAnimator) return;
-            
+            if (!_hasAnimator) return;
+
+            Vector3 origin = _playerRigidbody.worldCenterOfMass;
+            float maxDistance = Dis2Ground + 0.5f;
+
+            Debug.DrawRay(origin, Vector3.down * maxDistance, Color.red);
+
             RaycastHit hitInfo;
-            if(Physics.Raycast(_playerRigidbody.worldCenterOfMass, Vector3.down, out hitInfo, Dis2Ground + 0.1f, GroundCheck))
+
+            // Raycast with layermask (ignoring self)
+            if (Physics.Raycast(origin, Vector3.down, out hitInfo, maxDistance, GroundCheck, QueryTriggerInteraction.Ignore))
             {
-                //Grounded
-                _grounded = true;
-                SetAnimationGrounding();
-                return;
+                // Ignore if the hit is the player's own collider
+                if (hitInfo.collider != _playerCollider)
+                {
+                    _grounded = true;
+                    SetAnimationGrounding();
+                    return;
+                }
             }
-            //Falling
+
+            // If we get here, we didn't hit ground
             _grounded = false;
             _animator.SetFloat(_zVelHash, _playerRigidbody.linearVelocity.y);
             SetAnimationGrounding();
-            return;
         }
 
         private void SetAnimationGrounding()
