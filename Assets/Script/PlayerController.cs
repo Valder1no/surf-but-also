@@ -1,6 +1,3 @@
-using System;
-using System.Collections;
-using System.Collections.Generic;
 using UnityEngine;
 using UnityTutorial.Manager;
 
@@ -8,164 +5,174 @@ namespace UnityTutorial.PlayerControl
 {
     public class PlayerController : MonoBehaviour
     {
-        [SerializeField] private float AnimBlendSpeed = 8.9f;
+        [Header("Camera")]
         [SerializeField] private Transform CameraRoot;
         [SerializeField] private Transform Camera;
         [SerializeField] private float UpperLimit = -40f;
         [SerializeField] private float BottomLimit = 70f;
         [SerializeField] private float MouseSensitivity = 21.9f;
+
+        [Header("Movement")]
+        [SerializeField] private float WalkSpeed = 2f;
+        [SerializeField] private float RunSpeed = 6f;
+        [SerializeField] private float CrouchSpeed = 1.5f;
+
+        [Header("Jump + Ground")]
         [SerializeField, Range(10, 500)] private float JumpFactor = 260f;
-        [SerializeField] private float Dis2Ground = 1.1f;
-        [SerializeField] private LayerMask GroundCheck;
-        [SerializeField] private float AirResistance = 0.8f;
-        private Rigidbody _playerRigidbody;
-        private InputManager _inputManager;
-        private Animator _animator;
-        private bool _grounded = false;
-        private bool _hasAnimator;
-        private int _xVelHash;
-        private int _yVelHash;
-        private int _jumpHash;
-        private int _groundHash;
-        private int _fallingHash;
-        private int _zVelHash;
-        private int _crouchHash;
+        [SerializeField] private float DistanceToGround = 1.1f;
+        [SerializeField] private LayerMask GroundMask;
+        [SerializeField] private float AirMovementMultiplier = 0.8f;
+
+        private Rigidbody _rigidbody;
+        private InputManager _input;
+        private Collider _collider;
+        private bool _grounded;
+
         private float _xRotation;
-
-        private Collider _playerCollider;
-
-        private const float _walkSpeed = 2f;
-        private const float _runSpeed = 6f;
         private Vector2 _currentVelocity;
-        
 
+        private void Start()
+        {
+            _rigidbody = GetComponent<Rigidbody>();
+            _input = GetComponent<InputManager>();
+            _collider = GetComponent<Collider>();
 
-        private void Start() {
-            _hasAnimator = TryGetComponent<Animator>(out _animator);
-            _playerRigidbody = GetComponent<Rigidbody>();
-            _inputManager = GetComponent<InputManager>();
-            _playerCollider = GetComponent<Collider>();  // <--- CACHE THE PLAYER COLLIDER
-
-            _xVelHash = Animator.StringToHash("X_Velocity");
-            _yVelHash = Animator.StringToHash("Y_Velocity");
-            _zVelHash = Animator.StringToHash("Z_Velocity");
-            _jumpHash = Animator.StringToHash("Jump");
-            _groundHash = Animator.StringToHash("Grounded");
-            _fallingHash = Animator.StringToHash("Falling");
-            _crouchHash = Animator.StringToHash("Crouch");
+            Debug.Log("<color=yellow>PlayerController initialized.</color>");
         }
 
-        private void FixedUpdate() {
-            Debug.Log($"Jump: {_inputManager.Jump}, Crouch: {_inputManager.Crouch}, Grounded: {_grounded}");
+        private void FixedUpdate()
+        {
             SampleGround();
             Move();
             HandleJump();
-            HandleCrouch();
+            HandleCrouchDebug();
         }
-        private void LateUpdate() {
-            CamMovements();
+
+        private void LateUpdate()
+        {
+            CamMovement();
         }
 
         private void Move()
         {
-            if(!_hasAnimator) return;
+            Debug.Log($"Move Input: {_input.Move}, Run: {_input.Run}");
 
-            float targetSpeed = _inputManager.Run ? _runSpeed : _walkSpeed;
-            if(_inputManager.Crouch) targetSpeed = 1.5f;
-            if(_inputManager.Move ==Vector2.zero) targetSpeed = 0;
+            float targetSpeed = _input.Run ? RunSpeed : WalkSpeed;
+            if (_input.Crouch) targetSpeed = CrouchSpeed;
+            if (_input.Move == Vector2.zero) targetSpeed = 0;
 
-            if(_grounded)
+            Debug.Log($"TargetSpeed = {targetSpeed}");
+
+            if (_grounded)
             {
-                
-            _currentVelocity.x = Mathf.Lerp(_currentVelocity.x, _inputManager.Move.x * targetSpeed, AnimBlendSpeed * Time.fixedDeltaTime);
-            _currentVelocity.y =  Mathf.Lerp(_currentVelocity.y, _inputManager.Move.y * targetSpeed, AnimBlendSpeed * Time.fixedDeltaTime);
+                _currentVelocity.x = Mathf.Lerp(_currentVelocity.x, _input.Move.x * targetSpeed, 10f * Time.fixedDeltaTime);
+                _currentVelocity.y = Mathf.Lerp(_currentVelocity.y, _input.Move.y * targetSpeed, 10f * Time.fixedDeltaTime);
 
-            var xVelDifference = _currentVelocity.x - _playerRigidbody.linearVelocity.x;
-            var zVelDifference = _currentVelocity.y - _playerRigidbody.linearVelocity.z;
+                Vector3 diff = new Vector3(
+                    _currentVelocity.x - _rigidbody.linearVelocity.x,
+                    0,
+                    _currentVelocity.y - _rigidbody.linearVelocity.z
+                );
 
-            _playerRigidbody.AddForce(transform.TransformVector(new Vector3(xVelDifference, 0 , zVelDifference)), ForceMode.VelocityChange);
+                Debug.Log($"Applying Ground Movement Force: {diff}");
+                _rigidbody.AddForce(transform.TransformVector(diff), ForceMode.VelocityChange);
             }
             else
             {
-                _playerRigidbody.AddForce(transform.TransformVector(new Vector3(_currentVelocity.x * AirResistance,0,_currentVelocity.y * AirResistance)), ForceMode.VelocityChange);
+                Vector3 air = transform.TransformVector(new Vector3(_currentVelocity.x, 0, _currentVelocity.y))
+                              * AirMovementMultiplier;
+
+                Debug.Log($"Applying Air Force: {air}");
+                _rigidbody.AddForce(air, ForceMode.VelocityChange);
             }
-
-
-            _animator.SetFloat(_xVelHash , _currentVelocity.x);
-            _animator.SetFloat(_yVelHash, _currentVelocity.y);
         }
 
-        private void CamMovements()
+        private void CamMovement()
         {
-            if(!_hasAnimator) return;
+            float mx = _input.Look.x;
+            float my = _input.Look.y;
 
-            var Mouse_X = _inputManager.Look.x;
-            var Mouse_Y = _inputManager.Look.y;
+            Debug.Log($"Look Input: {mx}, {my}");
+
             Camera.position = CameraRoot.position;
-            
-            
-            _xRotation -= Mouse_Y * MouseSensitivity * Time.smoothDeltaTime;
+
+            _xRotation -= my * MouseSensitivity * Time.smoothDeltaTime;
             _xRotation = Mathf.Clamp(_xRotation, UpperLimit, BottomLimit);
 
-            Camera.localRotation = Quaternion.Euler(_xRotation, 0 , 0);
-            _playerRigidbody.MoveRotation(_playerRigidbody.rotation * Quaternion.Euler(0, Mouse_X * MouseSensitivity * Time.smoothDeltaTime, 0));
+            Camera.localRotation = Quaternion.Euler(_xRotation, 0, 0);
+
+            _rigidbody.MoveRotation(
+                _rigidbody.rotation *
+                Quaternion.Euler(0, mx * MouseSensitivity * Time.smoothDeltaTime, 0)
+            );
         }
-
-        private void HandleCrouch() => _animator.SetBool(_crouchHash , _inputManager.Crouch);
-
 
         private void HandleJump()
         {
-            if(!_hasAnimator) return;
-            if(!_inputManager.Jump) return;
-            if(!_grounded) return;
-            _animator.SetTrigger(_jumpHash);
+            if (!_input.Jump)
+            {
+                return;
+            }
 
-            _playerRigidbody.AddForce(-_playerRigidbody.linearVelocity.y * Vector3.up, ForceMode.VelocityChange);
-            _playerRigidbody.AddForce(Vector3.up * JumpFactor, ForceMode.Impulse);
-            _animator.ResetTrigger(_jumpHash);
+            Debug.Log($"Jump Pressed, Grounded: {_grounded}");
+
+            _input.ConsumeJump();
+            
+            if (!_grounded)
+            {
+                Debug.Log("<color=red>Jump failed: NOT GROUNDED.</color>");
+                return;
+            }
+
+            Debug.Log("<color=green>Jumping!</color>");
+
+            _rigidbody.AddForce(-_rigidbody.linearVelocity.y * Vector3.up, ForceMode.VelocityChange);
+            _rigidbody.AddForce(Vector3.up * JumpFactor, ForceMode.Impulse);
         }
 
-        public void JumpAddForce()
+        private void HandleCrouchDebug()
         {
-            _playerRigidbody.AddForce (Vector3.up* JumpFactor, ForceMode.Impulse);
+            if (_input.Crouch)
+            {
+                Debug.Log("<color=cyan>Crouch pressed. (Note: No crouch logic implemented yet)</color>");
+            }
         }
-
-
 
         private void SampleGround()
         {
-            if (!_hasAnimator) return;
+            Vector3 origin = _rigidbody.worldCenterOfMass;
+            float maxDist = DistanceToGround + 0.5f;
 
-            Vector3 origin = _playerRigidbody.worldCenterOfMass;
-            float maxDistance = Dis2Ground + 0.5f;
+            Debug.DrawRay(origin, Vector3.down * maxDist, Color.red);
 
-            Debug.DrawRay(origin, Vector3.down * maxDistance, Color.red);
+            Debug.Log($"Raycasting from {origin}, distance {maxDist}");
 
-            RaycastHit hitInfo;
-
-            // Raycast with layermask (ignoring self)
-            if (Physics.Raycast(origin, Vector3.down, out hitInfo, maxDistance, GroundCheck, QueryTriggerInteraction.Ignore))
+            if (Physics.Raycast(origin, Vector3.down, out RaycastHit hit, maxDist, GroundMask))
             {
-                // Ignore if the hit is the player's own collider
-                if (hitInfo.collider != _playerCollider)
+                Debug.Log($"Ray hit: {hit.collider.name} (layer: {hit.collider.gameObject.layer})");
+
+                if (hit.collider != _collider)
                 {
+                    if (!_grounded)
+                        Debug.Log("<color=green>Grounded = TRUE</color>");
+
                     _grounded = true;
-                    SetAnimationGrounding();
                     return;
                 }
+                else
+                {
+                    Debug.Log("<color=red>Ray hit the PLAYER's own collider — ignoring!</color>");
+                }
+            }
+            else
+            {
+                Debug.Log("<color=orange>No ground detected</color>");
             }
 
-            // If we get here, we didn't hit ground
-            _grounded = false;
-            _animator.SetFloat(_zVelHash, _playerRigidbody.linearVelocity.y);
-            SetAnimationGrounding();
-        }
+            if (_grounded)
+                Debug.Log("<color=orange>Grounded = FALSE</color>");
 
-        private void SetAnimationGrounding()
-        {
-            _animator.SetBool(_fallingHash, !_grounded);
-            _animator.SetBool(_groundHash, _grounded);
+            _grounded = false;
         }
     }
 }
