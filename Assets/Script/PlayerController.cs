@@ -147,32 +147,45 @@ namespace UnityTutorial.PlayerControl
 
             Debug.Log($"Raycasting from {origin}, distance {maxDist}");
 
-            if (Physics.Raycast(origin, Vector3.down, out RaycastHit hit, maxDist, GroundMask))
+            Vector3[] directions =
             {
-                Debug.Log($"Ray hit: {hit.collider.name} (layer: {hit.collider.gameObject.layer})");
+                Vector3.down,
+                Vector3.forward,
+                Vector3.back,
+                Vector3.left,
+                Vector3.right
+            };
 
-                if (hit.collider != _collider)
+            foreach (var dir in directions)
+            {
+                if (Physics.Raycast(origin, dir, out RaycastHit hit, maxDist, GroundMask))
                 {
-                    if (!_grounded)
-                        Debug.Log("<color=green>Grounded = TRUE</color>");
+                    Debug.Log($"Ray hit: {hit.collider.name} (layer: {hit.collider.gameObject.layer})");
 
-                    _grounded = true;
-                    return;
+                    if (hit.collider != _collider)
+                    {
+                        if (!_grounded)
+                            Debug.Log("<color=green>Grounded = TRUE</color>");
+
+                        _grounded = true;
+                        return;
+                    }
+                    else
+                    {
+                        Debug.Log("<color=red>Ray hit the PLAYER's own collider — ignoring!</color>");
+                    }
                 }
                 else
                 {
-                    Debug.Log("<color=red>Ray hit the PLAYER's own collider — ignoring!</color>");
+                    Debug.Log("<color=orange>No ground detected</color>");
                 }
-            }
-            else
-            {
-                Debug.Log("<color=orange>No ground detected</color>");
-            }
 
-            if (_grounded)
-                Debug.Log("<color=orange>Grounded = FALSE</color>");
+                if (_grounded)
+                    Debug.Log("<color=orange>Grounded = FALSE</color>");
 
-            _grounded = false;
+                _grounded = false;
+            }
+        
         }
     }
 }
