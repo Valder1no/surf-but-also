@@ -20,13 +20,15 @@ namespace UnityTutorial.PlayerControl
         [Header("Jump + Ground")]
         [SerializeField, Range(10, 500)] private float JumpFactor = 260f;
         [SerializeField] private float DistanceToGround = 1.1f;
-        [SerializeField] private LayerMask GroundMask;  
+        [SerializeField] private LayerMask GroundMask;
         [SerializeField] private float AirMovementMultiplier = 0.8f;
 
         private Rigidbody _rigidbody;
         private InputManager _input;
         private Collider _collider;
+
         private bool _grounded;
+        private bool _canWallJump;
 
         private float _xRotation;
         private Vector2 _currentVelocity;
@@ -43,84 +45,81 @@ namespace UnityTutorial.PlayerControl
         private void FixedUpdate()
         {
             SampleGround();
+            SampleWallJump();
+            ApplyAntiStick();
             Move();
             HandleJump();
-            HandleCrouchDebug();
-        }
+            HandleCrouchDebug();}
+
+            private void ApplyAntiStick()
+            {
+                if (_grounded) return; // don't push away when on the ground
+
+                Vector3 origin = _rigidbody.worldCenterOfMass;
+                float dist = 0.9f;  // small distance to detect touching walls
+
+                Vector3[] dirs = {
+                    Vector3.forward,
+                    Vector3.back,
+                    Vector3.left,
+                    Vector3.right
+                };
+
+                foreach (var d in dirs)
+                {
+                    if (Physics.Raycast(origin, d, dist, GroundMask))
+                    {
+                        // Push opposite of the wall normal
+                        _rigidbody.AddForce(-d * 100f, ForceMode.Acceleration);
+                        return;
+                    }
+                }
+                
+            }
 
         private void LateUpdate()
         {
             CamMovement();
         }
 
+        // ---------------- MOVEMENT ----------------
+
         private void Move()
         {
             Debug.Log($"Move Input: {_input.Move}, Run: {_input.Run}");
 
-            // get velocity info ONCE here (global to this method)
-            Vector3 rbVel = _rigidbody.linearVelocity;
-            Vector3 rbVelHorizontal = new Vector3(rbVel.x, 0f, rbVel.z);
-            float horizontalSpeed = rbVelHorizontal.magnitude;
-
-            // compute target speed if input exists
             float targetSpeed = _input.Run ? RunSpeed : WalkSpeed;
+
             if (_input.Crouch) targetSpeed = CrouchSpeed;
+            if (_input.Move == Vector2.zero) targetSpeed = 0;
 
-            bool noInput = _input.Move == Vector2.zero;
+            Debug.Log($"TargetSpeed = {targetSpeed}");
 
-            // ============================================================
-            // ======================== GROUNDED ===========================
-            // ============================================================
             if (_grounded)
             {
-                // ----- NO INPUT → APPLY SPEED-ADAPTIVE FRICTION -----
-                if (noInput)
-                {
-                    // 0 speed = sticky ; 12+ speed = slidy
-                    float frictionFactor = Mathf.InverseLerp(0f, 12f, horizontalSpeed);
-                    float friction = Mathf.Lerp(10f, 0.05f, frictionFactor);
-
-                    if (horizontalSpeed > 0.01f)
-                    {
-                        Vector3 frictionForce = -rbVelHorizontal.normalized * friction;
-                        _rigidbody.AddForce(frictionForce, ForceMode.Acceleration);
-                    }
-
-                    return; // done for grounded no-input case
-                }
-
-                // ----- INPUT EXISTS → NORMAL MOVEMENT -----
-                _currentVelocity.x = Mathf.Lerp(
-                    _currentVelocity.x,
-                    _input.Move.x * targetSpeed,
-                    1f * Time.fixedDeltaTime
-                );
-
-                _currentVelocity.y = Mathf.Lerp(
-                    _currentVelocity.y,
-                    _input.Move.y * targetSpeed,
-                    10f * Time.fixedDeltaTime
-                );
+                _currentVelocity.x = Mathf.Lerp(_currentVelocity.x, _input.Move.x * targetSpeed, 10f * Time.fixedDeltaTime);
+                _currentVelocity.y = Mathf.Lerp(_currentVelocity.y, _input.Move.y * targetSpeed, 10f * Time.fixedDeltaTime);
 
                 Vector3 diff = new Vector3(
-                    _currentVelocity.x - rbVel.x,
-                    0f,
-                    _currentVelocity.y - rbVel.z
+                    _currentVelocity.x - _rigidbody.linearVelocity.x,
+                    0,
+                    _currentVelocity.y - _rigidbody.linearVelocity.z
                 );
 
+                Debug.Log($"Applying Ground Movement Force: {diff}");
                 _rigidbody.AddForce(transform.TransformVector(diff), ForceMode.VelocityChange);
-                return;
             }
+            else
+            {
+                Vector3 air = transform.TransformVector(new Vector3(_currentVelocity.x, 0, _currentVelocity.y))
+                              * AirMovementMultiplier;
 
-            // ============================================================
-            // ========================== AIR =============================
-            // ============================================================
-            Vector3 airInput = transform.TransformVector(
-                new Vector3(_currentVelocity.x, 0, _currentVelocity.y)
-            ) * AirMovementMultiplier;
-
-            _rigidbody.AddForce(airInput, ForceMode.VelocityChange);
+                Debug.Log($"Applying Air Force: {air}");
+                _rigidbody.AddForce(air, ForceMode.VelocityChange);
+            }
         }
+
+        // ---------------- CAMERA ----------------
 
         private void CamMovement()
         {
@@ -137,31 +136,31 @@ namespace UnityTutorial.PlayerControl
             Camera.localRotation = Quaternion.Euler(_xRotation, 0, 0);
 
             _rigidbody.MoveRotation(
-                _rigidbody.rotation *
-                Quaternion.Euler(0, mx * MouseSensitivity * Time.smoothDeltaTime, 0)
+                _rigidbody.rotation * Quaternion.Euler(0, mx * MouseSensitivity * Time.smoothDeltaTime, 0)
             );
         }
 
+        // ---------------- JUMP ----------------
+
         private void HandleJump()
         {
-            if (!_input.Jump)
+            if (!_input.Jump) return;
+
+            Debug.Log($"Jump Pressed. Grounded: {_grounded}, WallTouch: {_canWallJump}");
+            _input.ConsumeJump();
+
+            if (!_canWallJump)
             {
+                Debug.Log("<color=red>Jump failed: no wall to jump from.</color>");
                 return;
             }
 
-            Debug.Log($"Jump Pressed, Grounded: {_grounded}");
+            Debug.Log("<color=green>WALL JUMP!</color>");
 
-            _input.ConsumeJump();
-            
-            if (!_grounded)
-            {
-                Debug.Log("<color=red>Jump failed: NOT GROUNDED.</color>");
-                return; // lmnoT t t t t lmnot TTTTTT (the T stand, keep it niche, and keep the change)
-            }
-
-            Debug.Log("<color=green>Jumping!</color>");
-
+            // Remove downward velocity
             _rigidbody.AddForce(-_rigidbody.linearVelocity.y * Vector3.up, ForceMode.VelocityChange);
+
+            // Jump upward
             _rigidbody.AddForce(Vector3.up * JumpFactor, ForceMode.Impulse);
         }
 
@@ -173,46 +172,58 @@ namespace UnityTutorial.PlayerControl
             }
         }
 
+        // ---------------- GROUND CHECK (DOWN ONLY) ----------------
+
         private void SampleGround()
         {
             Vector3 origin = _rigidbody.worldCenterOfMass;
-            float maxDist = DistanceToGround + 0.15f;
+            float maxDist = DistanceToGround + 0.5f;
 
-            Vector3[] directions =
+            Debug.DrawRay(origin, Vector3.down * maxDist, Color.red);
+
+            // ONLY DOWN determines grounded state
+            if (Physics.Raycast(origin, Vector3.down, out RaycastHit hit, maxDist, GroundMask)
+                && hit.collider != _collider)
             {
-        Vector3.down,
-        Vector3.forward,
-        Vector3.back,
-        Vector3.left,
-        Vector3.right
-    };
+                if (!_grounded)
+                    Debug.Log("<color=green>Grounded = TRUE</color>");
 
-            bool foundGround = false;
-
-            foreach (var dir in directions)
-            {
-                if (Physics.Raycast(origin, dir, out RaycastHit hit, maxDist, GroundMask))
-                {
-                    if (hit.collider != _collider)
-                    {
-                        foundGround = true;
-                        break;
-                    }
-                }
-            }
-
-            // Apply final state outside loop
-            if (foundGround)
-            {
-                if (!_grounded) Debug.Log("<color=green>Grounded = TRUE</color>");
                 _grounded = true;
             }
             else
             {
-                if (_grounded) Debug.Log("<color=red>Grounded = FALSE</color>");
+                if (_grounded)
+                    Debug.Log("<color=red>Grounded = FALSE</color>");
+
                 _grounded = false;
             }
+        }
 
+        // ---------------- WALL JUMP CHECK ----------------
+
+        private void SampleWallJump()
+        {
+            Vector3 origin = _rigidbody.worldCenterOfMass;
+            float dist = 1.1f;
+
+            Vector3[] directions =
+            {
+                Vector3.forward,
+                Vector3.back,
+                Vector3.left,
+                Vector3.right
+            };
+
+            _canWallJump = false;
+
+            foreach (var dir in directions)
+            {
+                if (Physics.Raycast(origin, dir, dist, GroundMask))
+                {
+                    _canWallJump = true;
+                    return;
+                }
+            }
         }
     }
 }
