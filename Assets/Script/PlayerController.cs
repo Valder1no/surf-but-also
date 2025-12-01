@@ -1,4 +1,4 @@
-using UnityEngine;
+﻿using UnityEngine;
 using UnityTutorial.Manager;
 
 namespace UnityTutorial.PlayerControl
@@ -20,7 +20,7 @@ namespace UnityTutorial.PlayerControl
         [Header("Jump + Ground")]
         [SerializeField, Range(10, 500)] private float JumpFactor = 260f;
         [SerializeField] private float DistanceToGround = 1.1f;
-        [SerializeField] private LayerMask GroundMask;
+        [SerializeField] private LayerMask GroundMask;  
         [SerializeField] private float AirMovementMultiplier = 0.8f;
 
         private Rigidbody _rigidbody;
@@ -57,34 +57,69 @@ namespace UnityTutorial.PlayerControl
         {
             Debug.Log($"Move Input: {_input.Move}, Run: {_input.Run}");
 
+            // get velocity info ONCE here (global to this method)
+            Vector3 rbVel = _rigidbody.linearVelocity;
+            Vector3 rbVelHorizontal = new Vector3(rbVel.x, 0f, rbVel.z);
+            float horizontalSpeed = rbVelHorizontal.magnitude;
+
+            // compute target speed if input exists
             float targetSpeed = _input.Run ? RunSpeed : WalkSpeed;
             if (_input.Crouch) targetSpeed = CrouchSpeed;
-            if (_input.Move == Vector2.zero) targetSpeed = 0;
 
-            Debug.Log($"TargetSpeed = {targetSpeed}");
+            bool noInput = _input.Move == Vector2.zero;
 
+            // ============================================================
+            // ======================== GROUNDED ===========================
+            // ============================================================
             if (_grounded)
             {
-                _currentVelocity.x = Mathf.Lerp(_currentVelocity.x, _input.Move.x * targetSpeed, 10f * Time.fixedDeltaTime);
-                _currentVelocity.y = Mathf.Lerp(_currentVelocity.y, _input.Move.y * targetSpeed, 10f * Time.fixedDeltaTime);
+                // ----- NO INPUT → APPLY SPEED-ADAPTIVE FRICTION -----
+                if (noInput)
+                {
+                    // 0 speed = sticky ; 12+ speed = slidy
+                    float frictionFactor = Mathf.InverseLerp(0f, 12f, horizontalSpeed);
+                    float friction = Mathf.Lerp(10f, 0.05f, frictionFactor);
 
-                Vector3 diff = new Vector3(
-                    _currentVelocity.x - _rigidbody.linearVelocity.x,
-                    0,
-                    _currentVelocity.y - _rigidbody.linearVelocity.z
+                    if (horizontalSpeed > 0.01f)
+                    {
+                        Vector3 frictionForce = -rbVelHorizontal.normalized * friction;
+                        _rigidbody.AddForce(frictionForce, ForceMode.Acceleration);
+                    }
+
+                    return; // done for grounded no-input case
+                }
+
+                // ----- INPUT EXISTS → NORMAL MOVEMENT -----
+                _currentVelocity.x = Mathf.Lerp(
+                    _currentVelocity.x,
+                    _input.Move.x * targetSpeed,
+                    1f * Time.fixedDeltaTime
                 );
 
-                Debug.Log($"Applying Ground Movement Force: {diff}");
-                _rigidbody.AddForce(transform.TransformVector(diff), ForceMode.VelocityChange);
-            }
-            else
-            {
-                Vector3 air = transform.TransformVector(new Vector3(_currentVelocity.x, 0, _currentVelocity.y))
-                              * AirMovementMultiplier;
+                _currentVelocity.y = Mathf.Lerp(
+                    _currentVelocity.y,
+                    _input.Move.y * targetSpeed,
+                    10f * Time.fixedDeltaTime
+                );
 
-                Debug.Log($"Applying Air Force: {air}");
-                _rigidbody.AddForce(air, ForceMode.VelocityChange);
+                Vector3 diff = new Vector3(
+                    _currentVelocity.x - rbVel.x,
+                    0f,
+                    _currentVelocity.y - rbVel.z
+                );
+
+                _rigidbody.AddForce(transform.TransformVector(diff), ForceMode.VelocityChange);
+                return;
             }
+
+            // ============================================================
+            // ========================== AIR =============================
+            // ============================================================
+            Vector3 airInput = transform.TransformVector(
+                new Vector3(_currentVelocity.x, 0, _currentVelocity.y)
+            ) * AirMovementMultiplier;
+
+            _rigidbody.AddForce(airInput, ForceMode.VelocityChange);
         }
 
         private void CamMovement()
@@ -121,7 +156,7 @@ namespace UnityTutorial.PlayerControl
             if (!_grounded)
             {
                 Debug.Log("<color=red>Jump failed: NOT GROUNDED.</color>");
-                return;
+                return; // lmnoT t t t t lmnot TTTTTT (the T stand, keep it niche, and keep the change)
             }
 
             Debug.Log("<color=green>Jumping!</color>");
@@ -141,51 +176,43 @@ namespace UnityTutorial.PlayerControl
         private void SampleGround()
         {
             Vector3 origin = _rigidbody.worldCenterOfMass;
-            float maxDist = DistanceToGround + 0.5f;
-
-            Debug.DrawRay(origin, Vector3.down * maxDist, Color.red);
-
-            Debug.Log($"Raycasting from {origin}, distance {maxDist}");
+            float maxDist = DistanceToGround + 0.15f;
 
             Vector3[] directions =
             {
-                Vector3.down,
-                Vector3.forward,
-                Vector3.back,
-                Vector3.left,
-                Vector3.right
-            };
+        Vector3.down,
+        Vector3.forward,
+        Vector3.back,
+        Vector3.left,
+        Vector3.right
+    };
+
+            bool foundGround = false;
 
             foreach (var dir in directions)
             {
                 if (Physics.Raycast(origin, dir, out RaycastHit hit, maxDist, GroundMask))
                 {
-                    Debug.Log($"Ray hit: {hit.collider.name} (layer: {hit.collider.gameObject.layer})");
-
                     if (hit.collider != _collider)
                     {
-                        if (!_grounded)
-                            Debug.Log("<color=green>Grounded = TRUE</color>");
-
-                        _grounded = true;
-                        return;
-                    }
-                    else
-                    {
-                        Debug.Log("<color=red>Ray hit the PLAYER's own collider — ignoring!</color>");
+                        foundGround = true;
+                        break;
                     }
                 }
-                else
-                {
-                    Debug.Log("<color=orange>No ground detected</color>");
-                }
+            }
 
-                if (_grounded)
-                    Debug.Log("<color=orange>Grounded = FALSE</color>");
-
+            // Apply final state outside loop
+            if (foundGround)
+            {
+                if (!_grounded) Debug.Log("<color=green>Grounded = TRUE</color>");
+                _grounded = true;
+            }
+            else
+            {
+                if (_grounded) Debug.Log("<color=red>Grounded = FALSE</color>");
                 _grounded = false;
             }
-        
+
         }
     }
 }
